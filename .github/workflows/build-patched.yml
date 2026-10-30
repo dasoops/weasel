@@ -1,0 +1,82 @@
+name: Build Patched
+
+on:
+  push:
+    branches:
+      - keydiag0174
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    env:
+      boost_version: 1.84.0
+      BOOST_ROOT: ${{ github.workspace }}\deps\boost_1_84_0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Fetch all tags
+        run: git fetch --tags
+
+      - name: Configure build environment
+        shell: bash
+        run: |
+          cp env.vs2022.bat env.bat
+          echo git_ref_name="$(git describe --always)" >> $GITHUB_ENV
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          Test-Path "${env:ProgramFiles(x86)}\NSIS\Bin\makensis.exe"
+
+      - name: Cache Boost
+        id: cache-boost
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BOOST_ROOT }}
+          key: ${{ runner.os }}-boost-${{ env.boost_version }}
+
+      - name: Install Boost
+        if: steps.cache-boost.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          ./install_boost.bat
+          ./build.bat boost arm64
+
+      - name: Add msbuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Get Rime files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          .\get-rime.ps1 -use dev
+
+      - name: Build data
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          .\build.bat data
+
+      - name: Build Weasel
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          .\build.bat installer
+          Write-Host "---- output tree ----"
+          if (Test-Path output) { Get-ChildItem -Recurse output -Include *.exe,*.dll | Select-Object -First 40 FullName }
+          $exe = Get-ChildItem -Recurse output -Filter 'weasel*.exe' -ErrorAction SilentlyContinue
+          if (-not $exe) { throw "installer was not produced" }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: weasel-artifact
+          if-no-files-found: error
+          path: |
+            .\output\**\weasel*.exe
