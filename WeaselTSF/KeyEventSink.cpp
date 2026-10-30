@@ -25,6 +25,8 @@ void WeaselTSF::_ProcessKeyEvent(WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
   GetKeyboardState(_lpbKeyState);
   if (!ConvertKeyEvent(static_cast<UINT>(wParam), lParam, _lpbKeyState, ke)) {
     /* Unknown key event */
+    KeyDiagLog("DROP vkey=0x%02x lparam=0x%08x (ConvertKeyEvent failed)",
+               (unsigned)wParam, (unsigned)lParam);
     *pfEaten = FALSE;
   } else {
     // cheet key code when vertical auto reverse happened, swap up and down
@@ -36,6 +38,12 @@ void WeaselTSF::_ProcessKeyEvent(WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     }
     if (!keyCountToSimulate)
       *pfEaten = (BOOL)m_client.ProcessKeyEvent(ke);
+
+    KeyDiagLog(
+        "SEND vkey=0x%02x keycode=0x%04x mask=0x%04x eaten=%d composing=%d "
+        "ascii=%d",
+        (unsigned)wParam, (unsigned)ke.keycode, (unsigned)ke.mask,
+        (int)*pfEaten, (int)_status.composing, (int)_status.ascii_mode);
 
     if (ke.keycode == ibus::Caps_Lock) {
       if (prevKeyEvent.keycode == ibus::Caps_Lock && prevfEaten == TRUE &&

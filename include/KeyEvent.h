@@ -27,6 +27,10 @@ struct KeyEvent {
 };
 }  // namespace weasel
 
+// Diagnostic logger: appends to %TEMP%\weasel-keydiag.log.
+// Used to trace key translation when a key is dropped by the IME.
+void KeyDiagLog(const char* fmt, ...);
+
 bool ConvertKeyEvent(UINT vkey,
                      KeyInfo kinfo,
                      const LPBYTE keyState,

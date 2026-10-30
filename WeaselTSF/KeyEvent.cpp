@@ -1,6 +1,54 @@
 ﻿#include "stdafx.h"
 #include <KeyEvent.h>
 
+#include <cstdarg>
+#include <cstdio>
+#include <string.h>
+
+// ---------------------------------------------------------------------------
+// Diagnostic logging
+//
+// Appends one line per key translation to %TEMP%\weasel-keydiag.log so that a
+// key which never reaches the Rime engine can be identified.
+// Delete the file to reset; it is capped at ~1 MB.
+// ---------------------------------------------------------------------------
+void KeyDiagLog(const char* fmt, ...) {
+  static char path[MAX_PATH * 3] = {0};
+  if (!path[0]) {
+    wchar_t tmp[MAX_PATH] = {0};
+    if (!GetTempPathW(MAX_PATH, tmp))
+      return;
+    lstrcatW(tmp, L"weasel-keydiag.log");
+    if (!WideCharToMultiByte(CP_UTF8, 0, tmp, -1, path, sizeof(path) - 1, NULL,
+                             NULL))
+      return;
+  }
+
+  WIN32_FILE_ATTRIBUTE_DATA fad = {0};
+  if (GetFileAttributesExA(path, GetFileExInfoStandard, &fad) &&
+      ((unsigned long long)fad.nFileSizeHigh << 32 | fad.nFileSizeLow) >
+          1024ULL * 1024ULL) {
+    return;  // stop growing
+  }
+
+  FILE* fp = NULL;
+  if (fopen_s(&fp, path, "a") != 0 || !fp)
+    return;
+
+  SYSTEMTIME st = {0};
+  GetLocalTime(&st);
+  fprintf(fp, "%02d:%02d:%02d.%03d ", st.wHour, st.wMinute, st.wSecond,
+          st.wMilliseconds);
+
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(fp, fmt, ap);
+  va_end(ap);
+
+  fputc('\n', fp);
+  fclose(fp);
+}
+
 bool ConvertKeyEvent(UINT vkey,
                      KeyInfo kinfo,
                      const LPBYTE keyState,
@@ -49,8 +97,38 @@ bool ConvertKeyEvent(UINT vkey,
   table[VK_CONTROL] = 0;
   table[VK_MENU] = 0;
   int ret = ToUnicodeEx(vkey, UINT(kinfo), table, buf, buf_len, 0, NULL);
+  WCHAR first_char = (ret >= 1) ? buf[0] : 0;
   if (ret == 1) {
-    result.keycode = UINT(buf[0]);
+    KeyDiagLog("KEY vkey=0x%02x scan=0x%02x mask=0x%04x ret=1 ch=0x%04x",
+               vkey, (unsigned)kinfo.scanCode, (unsigned)result.mask,
+               (unsigned)first_char);
+    result.keycode = UINT(first_char);
+    return true;
+  }
+
+  // Fallback 1: some layouts emit a multi-character sequence; take the first.
+  if (ret > 1) {
+    KeyDiagLog(
+        "FALLBACK_SEQ vkey=0x%02x scan=0x%02x mask=0x%04x ret=%d ch=0x%04x",
+        vkey, (unsigned)kinfo.scanCode, (unsigned)result.mask, ret,
+        (unsigned)first_char);
+    result.keycode = UINT(first_char);
+    return true;
+  }
+
+  // Fallback 2: retry with a clean key state. A stale modifier bit left over
+  // from a previous key (or set by keyboard firmware/macro) can make
+  // ToUnicodeEx() return 0 for a key that is otherwise perfectly typed.
+  BYTE clean[256] = {0};
+  int ret_clean = ToUnicodeEx(vkey, UINT(kinfo), clean, buf, buf_len, 0, NULL);
+  WCHAR clean_char = (ret_clean >= 1) ? buf[0] : 0;
+  KeyDiagLog(
+      "FAIL vkey=0x%02x scan=0x%02x lparam=0x%08x mask=0x%04x ret=%d "
+      "ret_clean=%d ch_clean=0x%04x",
+      vkey, (unsigned)kinfo.scanCode, (unsigned)UINT(kinfo),
+      (unsigned)result.mask, ret, ret_clean, (unsigned)clean_char);
+  if (ret_clean >= 1) {
+    result.keycode = UINT(clean_char);
     return true;
   }
 
